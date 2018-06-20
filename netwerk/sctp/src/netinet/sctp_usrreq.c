@@ -34,7 +34,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/sys/netinet/sctp_usrreq.c 325370 2017-11-03 20:46:12Z tuexen $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_usrreq.c 334725 2018-06-06 19:27:06Z tuexen $");
 #endif
 
 #include <netinet/sctp_os.h>
@@ -233,7 +233,7 @@ sctp_finish(void)
 #endif
 	}
 #endif
-	SCTP_BASE_VAR(timer_thread_should_exit) = 1;
+	atomic_cmpset_int(&SCTP_BASE_VAR(timer_thread_should_exit), 0, 1);
 #if defined(__Userspace_os_Windows)
 	WaitForSingleObject(SCTP_BASE_VAR(timer_thread), INFINITE);
 	CloseHandle(SCTP_BASE_VAR(timer_thread));
@@ -358,7 +358,7 @@ sctp_notify(struct sctp_inpcb *inp,
 #endif
 		/* no need to unlock here, since the TCB is gone */
 	} else if (icmp_code == ICMP_UNREACH_NEEDFRAG) {
-		if ((net->dest_state & SCTP_ADDR_NO_PMTUD) == 0) {
+		if (net->dest_state & SCTP_ADDR_NO_PMTUD) {
 			SCTP_TCB_UNLOCK(stcb);
 			return;
 		}
@@ -415,11 +415,20 @@ void
 #else
 void *
 #endif
+#if defined(__APPLE__) && !defined(APPLE_LEOPARD) && !defined(APPLE_SNOWLEOPARD) && !defined(APPLE_LION) && !defined(APPLE_MOUNTAINLION) && !defined(APPLE_ELCAPITAN)
+sctp_ctlinput(int cmd, struct sockaddr *sa, void *vip, struct ifnet *ifp SCTP_UNUSED)
+#else
 sctp_ctlinput(int cmd, struct sockaddr *sa, void *vip)
+#endif
 {
 #if defined(__FreeBSD__)
 	struct ip *outer_ip;
 #endif
+
+#if defined(__Userspace__)
+	struct socket *upcall_socket = NULL;
+#endif
+
 	struct ip *inner_ip;
 	struct sctphdr *sh;
 	struct icmp *icmp;
@@ -528,7 +537,29 @@ sctp_ctlinput(int cmd, struct sockaddr *sa, void *vip)
 #else
 			            inner_ip->ip_len,
 #endif
-			            (uint32_t)ntohs(icmp->icmp_nextmtu));
+			            ntohs(icmp->icmp_nextmtu));
+
+#if defined(__Userspace__)
+			if (stcb && upcall_socket == NULL && !(stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_SOCKET_GONE)) {
+				if (stcb->sctp_socket != NULL) {
+					upcall_socket = stcb->sctp_socket;
+					SOCK_LOCK(upcall_socket);
+					soref(upcall_socket);
+					SOCK_UNLOCK(upcall_socket);
+				}
+			}
+			if (upcall_socket != NULL) {
+				if (upcall_socket->so_upcall != NULL) {
+					if (upcall_socket->so_error) {
+						(*upcall_socket->so_upcall)(upcall_socket, upcall_socket->so_upcallarg, M_NOWAIT);
+					}
+				}
+				ACCEPT_LOCK();
+				SOCK_LOCK(upcall_socket);
+				sorele(upcall_socket);
+			}
+#endif
+
 		} else {
 #if defined(__FreeBSD__) && __FreeBSD_version < 500000
 			/*
@@ -1137,22 +1168,10 @@ sctp_disconnect(struct socket *so)
 				if (SCTP_GET_STATE(asoc) !=
 				    SCTP_STATE_COOKIE_WAIT) {
 					/* Left with Data unread */
-					struct mbuf *err;
+					struct mbuf *op_err;
 
-					err = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr), 0, M_NOWAIT, 1, MT_DATA);
-					if (err) {
-						/*
-						 * Fill in the user
-						 * initiated abort
-						 */
-						struct sctp_paramhdr *ph;
-
-						ph = mtod(err, struct sctp_paramhdr *);
-						SCTP_BUF_LEN(err) = sizeof(struct sctp_paramhdr);
-						ph->param_type = htons(SCTP_CAUSE_USER_INITIATED_ABT);
-						ph->param_length = htons(SCTP_BUF_LEN(err));
-					}
-					sctp_send_abort_tcb(stcb, err, SCTP_SO_LOCKED);
+					op_err = sctp_generate_cause(SCTP_CAUSE_USER_INITIATED_ABT, "");
+					sctp_send_abort_tcb(stcb, op_err, SCTP_SO_LOCKED);
 					SCTP_STAT_INCR_COUNTER32(sctps_aborted);
 				}
 				SCTP_INP_RUNLOCK(inp);
@@ -5087,6 +5106,8 @@ sctp_setopt(struct socket *so, int optname, void *optval, size_t optsize,
 		if (sctp_auth_add_chunk(sauth->sauth_chunk, inp->sctp_ep.local_auth_chunks)) {
 			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, EINVAL);
 			error = EINVAL;
+		} else {
+			inp->auth_supported = 1;
 		}
 		SCTP_INP_WUNLOCK(inp);
 		break;

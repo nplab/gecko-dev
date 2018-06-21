@@ -303,6 +303,51 @@ debug_printf(const char *format, ...)
   }
 }
 
+static void
+handle_upcall(struct socket *sock, void *data, int flgs)
+{
+  int events = usrsctp_get_events(sock);
+
+  if (events & SCTP_EVENT_READ) {
+    #define BUFFERSIZE 2<<16
+    struct sctp_recvv_rn rn;
+    ssize_t n;
+    struct sockaddr_storage addr;
+    char *buf = (char *) malloc(BUFFERSIZE);
+    int flags = 0;
+    socklen_t len = (socklen_t)sizeof(struct sockaddr_storage);
+    unsigned int infotype = 0;
+    socklen_t infolen = sizeof(struct sctp_recvv_rn);
+
+    memset(&rn, 0, sizeof(struct sctp_recvv_rn));
+    n = usrsctp_recvv(sock, buf, BUFFERSIZE, (struct sockaddr *) &addr, &len, (void *)&rn, &infolen, &infotype, &flags);
+    DataChannelConnection *connection = static_cast<DataChannelConnection*>(data);
+    connection->ReceiveCallback(sock, buf, n, rn.recvv_rcvinfo, flags);
+  }
+
+  if (events & SCTP_EVENT_WRITE) {
+    struct sctp_sockstat ss;
+    socklen_t solen;
+    solen = sizeof(ss);
+    if (usrsctp_getsockopt(sock, IPPROTO_SCTP, SCTP_GET_SNDBUF_USE, &ss, &solen) < 0) {
+      LOG(("*** failed getsockopt SCTP_GET_SNDBUF_USE"));
+      return;
+    }
+
+    // Only send message if buffer if less than half filled
+    if (ss.ss_total_sndbuf < (usrsctp_sysctl_get_sctp_sendspace() / 2)) {
+      DataChannelConnection *connection = GetConnectionFromSocket(sock);
+      if (connection) {
+        connection->SendDeferredMessages();
+      } else {
+        LOG(("Can't find connection for socket %p", sock));
+      }
+    } else {
+      LOG(("SNDBUF level over threshold: %d", ss.ss_total_sndbuf));
+    }
+  }
+}
+
 DataChannelConnection::DataChannelConnection(DataConnectionListener *listener,
                                              nsIEventTarget *aTarget)
   : NeckoTargetHolder(aTarget)
@@ -322,6 +367,7 @@ DataChannelConnection::DataChannelConnection(DataConnectionListener *listener,
   mLocalPort = 0;
   mRemotePort = 0;
   mPendingType = PENDING_NONE;
+  mUpcallApi = PR_GetEnv("SCTP_UPCALL_API");
   LOG(("Constructor DataChannelConnection=%p, listener=%p", this, mListener.get()));
   mInternalIOThread = nullptr;
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
@@ -493,11 +539,31 @@ DataChannelConnection::Init(unsigned short aPort, uint16_t aNumStreams, bool aMa
   mSTS = do_GetService(NS_SOCKETTRANSPORTSERVICE_CONTRACTID, &rv);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 
-  // Open sctp with a callback
-  if ((mMasterSocket = usrsctp_socket(
-         AF_CONN, SOCK_STREAM, IPPROTO_SCTP, receive_cb, threshold_event,
-         usrsctp_sysctl_get_sctp_sendspace() / 2, this)) == nullptr) {
-    return false;
+  if (mUpcallApi) {
+    // Open sctp
+    if ((mMasterSocket = usrsctp_socket(
+      AF_CONN, SOCK_STREAM, IPPROTO_SCTP, NULL, NULL, 0, NULL)) == nullptr) {
+      return false;
+    }
+
+    LOG(("Creating socket using upcall API"));
+
+    // Register for SCTP's receive info structs
+    int on = 1;
+    if (usrsctp_setsockopt(mMasterSocket, IPPROTO_SCTP, SCTP_RECVRCVINFO, &on, sizeof(int)) < 0) {
+      perror("usrsctp_setsockopt SCTP_RECVRCVINFO");
+    }
+
+    // Set upcall handler
+    usrsctp_set_upcall(mMasterSocket, handle_upcall, this);
+  } else {
+    // Open sctp
+    if ((mMasterSocket = usrsctp_socket(
+          AF_CONN, SOCK_STREAM, IPPROTO_SCTP, receive_cb, threshold_event,
+          usrsctp_sysctl_get_sctp_sendspace() / 2, this)) == nullptr) {
+      return false;
+    }
+    LOG(("Creating socket using callback API"));
   }
 
   // Make non-blocking for bind/connect.  SCTP over UDP defaults to non-blocking

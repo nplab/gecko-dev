@@ -348,6 +348,7 @@ private:
   nsCOMPtr<nsIThread> mInternalIOThread;
   uint8_t mPendingType;
   nsCString mRecvBuffer;
+  bool mUpcallApi;
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
   bool mShutdown;

@@ -45,6 +45,7 @@
 #include "mozilla/GuardObjects.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/webgpu/InstanceProvider.h"
 #include "nsWrapperCacheInlines.h"
 #include "nsIIdleObserver.h"
 #include "nsIDocument.h"
@@ -217,6 +218,7 @@ class nsGlobalWindowInner final
   , public nsIInterfaceRequestor
   , public PRCListStr
   , public nsAPostRefreshObserver
+  , public mozilla::webgpu::InstanceProvider
 {
 public:
   typedef mozilla::TimeStamp TimeStamp;
@@ -361,9 +363,14 @@ public:
   GetOrCreateServiceWorker(const mozilla::dom::ServiceWorkerDescriptor& aDescriptor) override;
 
   RefPtr<mozilla::dom::ServiceWorkerRegistration>
+  GetServiceWorkerRegistration(const mozilla::dom::ServiceWorkerRegistrationDescriptor& aDescriptor) const override;
+
+  RefPtr<mozilla::dom::ServiceWorkerRegistration>
   GetOrCreateServiceWorkerRegistration(const mozilla::dom::ServiceWorkerRegistrationDescriptor& aDescriptor) override;
 
   void NoteCalledRegisterForServiceWorkerScope(const nsACString& aScope);
+
+  void NoteDOMContentLoaded();
 
   virtual nsresult FireDelayedDOMEvents() override;
 

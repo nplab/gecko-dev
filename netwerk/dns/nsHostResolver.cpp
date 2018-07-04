@@ -18,6 +18,7 @@
 #include "nsError.h"
 #include "nsISupportsBase.h"
 #include "nsISupportsUtils.h"
+#include "nsIThreadManager.h"
 #include "nsAutoPtr.h"
 #include "nsPrintfCString.h"
 #include "prthread.h"
@@ -508,7 +509,9 @@ static void DnsPrefChanged(const char* aPref, void* aClosure)
     MOZ_ASSERT(self);
 
     if (!strcmp(aPref, kPrefGetTtl)) {
+#ifdef DNSQUERY_AVAILABLE
         sGetTtlEnabled = Preferences::GetBool(kPrefGetTtl);
+#endif
     } else if (!strcmp(aPref, kPrefNativeIsLocalhost)) {
         gNativeIsLocalhost = Preferences::GetBool(kPrefNativeIsLocalhost);
     }
@@ -1049,7 +1052,8 @@ nsHostResolver::ConditionallyCreateThread(nsHostRecord *rec)
 
         // dispatch new worker thread
         nsCOMPtr<nsIThread> thread;
-        nsresult rv = NS_NewNamedThread(name, getter_AddRefs(thread), nullptr);
+        nsresult rv = NS_NewNamedThread(name, getter_AddRefs(thread), nullptr,
+                                        nsIThreadManager::kThreadPoolStackSize);
         if (NS_WARN_IF(NS_FAILED(rv)) || !thread) {
             return rv;
         }
@@ -1518,6 +1522,13 @@ nsHostResolver::CompleteLookup(nsHostRecord* rec, nsresult status, AddrInfo* aNe
 
         if (NS_SUCCEEDED(status)) {
             rec->mTRRSuccess++;
+            if (rec->mTRRSuccess == 1) {
+                // Store the duration on first succesful TRR response.  We
+                // don't know that there will be a second response nor can we
+                // tell which of two has useful data, especially in
+                // MODE_SHADOW where the actual results are discarded.
+                rec->mTrrDuration = TimeStamp::Now() - rec->mTrrStart;
+            }
         }
         if (TRROutstanding()) {
             rec->mFirstTRRresult = status;
@@ -1584,11 +1595,6 @@ nsHostResolver::CompleteLookup(nsHostRecord* rec, nsresult status, AddrInfo* aNe
             }
 
             // continue
-        }
-
-        if (NS_SUCCEEDED(status) && (rec->mTRRSuccess == 1)) {
-            // store the duration on first (used) TRR response
-            rec->mTrrDuration = TimeStamp::Now() - rec->mTrrStart;
         }
 
     } else { // native resolve completed
@@ -1860,6 +1866,10 @@ nsHostResolver::ThreadFunc()
         }
     } while(true);
 
+    nsCOMPtr<nsIThread> thread = NS_GetCurrentThread();
+    NS_DispatchToMainThread(NS_NewRunnableFunction("nsHostResolver::ThreadFunc::AsyncShutdown", [thread]() {
+        thread->AsyncShutdown();
+    }));
     mThreadCount--;
     LOG(("DNS lookup thread - queue empty, thread finished.\n"));
 }
@@ -1881,16 +1891,17 @@ nsHostResolver::Create(uint32_t maxCacheEntries,
                        uint32_t defaultGracePeriod,
                        nsHostResolver **result)
 {
-    auto *res = new nsHostResolver(maxCacheEntries, defaultCacheEntryLifetime,
-                                   defaultGracePeriod);
-    NS_ADDREF(res);
+    RefPtr<nsHostResolver> res =
+        new nsHostResolver(maxCacheEntries, defaultCacheEntryLifetime,
+                           defaultGracePeriod);
 
     nsresult rv = res->Init();
-    if (NS_FAILED(rv))
-        NS_RELEASE(res);
+    if (NS_FAILED(rv)) {
+        return rv;
+    }
 
-    *result = res;
-    return rv;
+    res.forget(result);
+    return NS_OK;
 }
 
 void

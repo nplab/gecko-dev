@@ -41,6 +41,8 @@
 #include "vm/TypedArrayObject.h"
 #include "vm/UnboxedObject.h"
 
+// [SMDOC] MacroAssembler multi-platform overview
+//
 // * How to read/write MacroAssembler method declarations:
 //
 // The following macros are made to avoid #ifdef around each method declarations
@@ -2012,6 +2014,14 @@ class MacroAssembler : public MacroAssemblerSpecific
     void loadStringIndexValue(Register str, Register dest, Label* fail);
 
     void loadJSContext(Register dest);
+
+    void switchToRealm(Register realm);
+    void switchToRealm(const void* realm, Register scratch);
+    void switchToObjectRealm(Register obj, Register scratch);
+    void switchToBaselineFrameRealm(Register scratch);
+    void switchToWasmTlsRealm(Register scratch1, Register scratch2);
+    void debugAssertContextRealm(const void* realm, Register scratch);
+
     void loadJitActivation(Register dest) {
         loadJSContext(dest);
         loadPtr(Address(dest, offsetof(JSContext, activation_)), dest);

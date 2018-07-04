@@ -99,6 +99,7 @@ class AnimationInspector {
     } = this;
 
     const target = this.inspector.target;
+    const direction = this.win.document.dir;
     this.animationsFront = new AnimationsFront(target.client, target.form);
     this.animationsFront.setWalkerActor(this.inspector.walker);
 
@@ -114,6 +115,7 @@ class AnimationInspector {
       App(
         {
           addAnimationsCurrentTimeListener,
+          direction,
           emitEventForTest,
           getAnimatedPropertyMap,
           getAnimationsCurrentTime,
@@ -515,7 +517,8 @@ class AnimationInspector {
     await this.inspector.highlighters.hideBoxModelHighlighter();
 
     if (nodeFront) {
-      await this.inspector.highlighters.showBoxModelHighlighter(nodeFront);
+      await this.inspector.highlighters.showBoxModelHighlighter(
+        nodeFront, { hideInfoBar: true, hideGuides: true });
     }
 
     this.inspector.store.dispatch(updateHighlightedNode(nodeFront));

@@ -11,8 +11,8 @@ use cssparser::{DeclarationListParser, parse_important, ParserInput, CowRcStr};
 use cssparser::{Parser, AtRuleParser, DeclarationParser, Delimiter, ParseErrorKind};
 use custom_properties::CustomPropertiesBuilder;
 use error_reporting::{ParseErrorReporter, ContextualParseError};
-use parser::{ParserContext, ParserErrorContext};
-use properties::animated_properties::AnimationValue;
+use parser::ParserContext;
+use properties::animated_properties::{AnimationValue, AnimationValueMap};
 use shared_lock::Locked;
 use smallbitvec::{self, SmallBitVec};
 use smallvec::SmallVec;
@@ -24,7 +24,6 @@ use style_traits::{CssWriter, ParseError, ParsingMode, StyleParseErrorKind, ToCs
 use stylesheets::{CssRuleType, Origin, UrlExtraData};
 use super::*;
 use values::computed::Context;
-use properties::animated_properties::AnimationValueMap;
 
 /// The animation rules.
 ///
@@ -1077,50 +1076,49 @@ where
 
 /// A helper to parse the style attribute of an element, in order for this to be
 /// shared between Servo and Gecko.
-pub fn parse_style_attribute<R>(
+///
+/// Inline because we call this cross-crate.
+#[inline]
+pub fn parse_style_attribute(
     input: &str,
     url_data: &UrlExtraData,
-    error_reporter: &R,
+    error_reporter: Option<&ParseErrorReporter>,
     quirks_mode: QuirksMode,
-) -> PropertyDeclarationBlock
-where
-    R: ParseErrorReporter
-{
+) -> PropertyDeclarationBlock {
     let context = ParserContext::new(
         Origin::Author,
         url_data,
         Some(CssRuleType::Style),
         ParsingMode::DEFAULT,
         quirks_mode,
+        error_reporter,
     );
 
-    let error_context = ParserErrorContext { error_reporter: error_reporter };
     let mut input = ParserInput::new(input);
-    parse_property_declaration_list(&context, &error_context, &mut Parser::new(&mut input))
+    parse_property_declaration_list(&context, &mut Parser::new(&mut input))
 }
 
 /// Parse a given property declaration. Can result in multiple
 /// `PropertyDeclaration`s when expanding a shorthand, for example.
 ///
 /// This does not attempt to parse !important at all.
-pub fn parse_one_declaration_into<R>(
+#[inline]
+pub fn parse_one_declaration_into(
     declarations: &mut SourcePropertyDeclaration,
     id: PropertyId,
     input: &str,
     url_data: &UrlExtraData,
-    error_reporter: &R,
+    error_reporter: Option<&ParseErrorReporter>,
     parsing_mode: ParsingMode,
     quirks_mode: QuirksMode
-) -> Result<(), ()>
-where
-    R: ParseErrorReporter
-{
+) -> Result<(), ()> {
     let context = ParserContext::new(
         Origin::Author,
         url_data,
         Some(CssRuleType::Style),
         parsing_mode,
         quirks_mode,
+        error_reporter,
     );
 
     let mut input = ParserInput::new(input);
@@ -1131,9 +1129,10 @@ where
     }).map_err(|err| {
         let location = err.location;
         let error = ContextualParseError::UnsupportedPropertyDeclaration(
-            parser.slice_from(start_position), err);
-        let error_context = ParserErrorContext { error_reporter: error_reporter };
-        context.log_css_error(&error_context, location, error);
+            parser.slice_from(start_position),
+            err,
+        );
+        context.log_css_error(location, error);
     })
 }
 
@@ -1193,14 +1192,10 @@ impl<'a, 'b, 'i> DeclarationParser<'i> for PropertyDeclarationParser<'a, 'b> {
 
 /// Parse a list of property declarations and return a property declaration
 /// block.
-pub fn parse_property_declaration_list<R>(
+pub fn parse_property_declaration_list(
     context: &ParserContext,
-    error_context: &ParserErrorContext<R>,
     input: &mut Parser,
-) -> PropertyDeclarationBlock
-where
-    R: ParseErrorReporter
-{
+) -> PropertyDeclarationBlock {
     let mut declarations = SourcePropertyDeclaration::new();
     let mut block = PropertyDeclarationBlock::new();
     let parser = PropertyDeclarationParser {
@@ -1228,7 +1223,7 @@ where
 
                 let location = error.location;
                 let error = ContextualParseError::UnsupportedPropertyDeclaration(slice, error);
-                context.log_css_error(error_context, location, error);
+                context.log_css_error(location, error);
             }
         }
     }

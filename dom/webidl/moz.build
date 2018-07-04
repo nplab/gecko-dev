@@ -328,6 +328,9 @@ with Files("WebAuthentication.webidl"):
 with Files("WebGL*"):
     BUG_COMPONENT = ("Core", "Canvas: WebGL")
 
+with Files("WebGPU*"):
+    BUG_COMPONENT = ("Core", "Canvas: WebGL")
+
 with Files("WebKitCSSMatrix.webidl"):
     BUG_COMPONENT = ("Core", "DOM: CSS Object Model")
 
@@ -384,7 +387,10 @@ WEBIDL_FILES = [
     'AudioStreamTrack.webidl',
     'AudioTrack.webidl',
     'AudioTrackList.webidl',
+    'AudioWorklet.webidl',
     'AudioWorkletGlobalScope.webidl',
+    'AudioWorkletNode.webidl',
+    'AudioWorkletProcessor.webidl',
     'AutocompleteInfo.webidl',
     'BarProp.webidl',
     'BaseAudioContext.webidl',
@@ -630,6 +636,7 @@ WEBIDL_FILES = [
     'ListBoxObject.webidl',
     'LocalMediaStream.webidl',
     'Location.webidl',
+    'MediaCapabilities.webidl',
     'MediaDeviceInfo.webidl',
     'MediaDevices.webidl',
     'MediaElementAudioSourceNode.webidl',
@@ -695,6 +702,7 @@ WEBIDL_FILES = [
     'ParentNode.webidl',
     'ParentSHistory.webidl',
     'PaymentAddress.webidl',
+    'PaymentMethodChangeEvent.webidl',
     'PaymentRequest.webidl',
     'PaymentRequestUpdateEvent.webidl',
     'PaymentResponse.webidl',
@@ -917,6 +925,8 @@ WEBIDL_FILES = [
     'WebComponents.webidl',
     'WebGL2RenderingContext.webidl',
     'WebGLRenderingContext.webidl',
+    'WebGPU.webidl',
+    'WebGPUExtras.webidl',
     'WebKitCSSMatrix.webidl',
     'WebSocket.webidl',
     'WheelEvent.webidl',

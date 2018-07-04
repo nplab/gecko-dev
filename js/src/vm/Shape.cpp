@@ -16,6 +16,7 @@
 #include "gc/Policy.h"
 #include "gc/PublicIterators.h"
 #include "js/HashTable.h"
+#include "js/UniquePtr.h"
 #include "util/Text.h"
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
@@ -541,6 +542,21 @@ Shape::updateDictionaryTable(ShapeTable* table, ShapeTable::Entry* entry,
     parent->handoffTableTo(this);
 }
 
+static void
+AssertValidPropertyOp(NativeObject* obj, GetterOp getter, SetterOp setter, unsigned attrs)
+{
+    // We only support PropertyOp accessors on ArrayObject and ArgumentsObject
+    // and we don't want to add more of these properties (bug 1404885).
+
+#ifdef DEBUG
+    if ((getter && !(attrs & JSPROP_GETTER)) ||
+        (setter && !(attrs & JSPROP_SETTER)))
+    {
+        MOZ_ASSERT(obj->is<ArrayObject>() || obj->is<ArgumentsObject>());
+    }
+#endif
+}
+
 /* static */ Shape*
 NativeObject::addAccessorPropertyInternal(JSContext* cx,
                                           HandleNativeObject obj, HandleId id,
@@ -550,6 +566,8 @@ NativeObject::addAccessorPropertyInternal(JSContext* cx,
 {
     AutoCheckShapeConsistency check(obj);
     AutoRooterGetterSetter gsRoot(cx, attrs, &getter, &setter);
+
+    AssertValidPropertyOp(obj, getter, setter, attrs);
 
     if (!maybeConvertToOrGrowDictionaryForAdd(cx, obj, id, &table, &entry, keep))
         return nullptr;
@@ -972,6 +990,7 @@ NativeObject::putAccessorProperty(JSContext* cx, HandleNativeObject obj, HandleI
 
     AutoCheckShapeConsistency check(obj);
     AssertValidArrayIndex(obj, id);
+    AssertValidPropertyOp(obj, getter, setter, attrs);
 
     AutoRooterGetterSetter gsRoot(cx, attrs, &getter, &setter);
 
@@ -1610,15 +1629,13 @@ ShapeHasher::match(const Key k, const Lookup& l)
 static KidsHash*
 HashChildren(Shape* kid1, Shape* kid2)
 {
-    KidsHash* hash = js_new<KidsHash>();
-    if (!hash || !hash->init(2)) {
-        js_delete(hash);
+    auto hash = MakeUnique<KidsHash>();
+    if (!hash || !hash->init(2))
         return nullptr;
-    }
 
     hash->putNewInfallible(StackShape(kid1), kid1);
     hash->putNewInfallible(StackShape(kid2), kid2);
-    return hash;
+    return hash.release();
 }
 
 bool
@@ -2026,6 +2043,8 @@ IsOriginalProto(GlobalObject* global, JSProtoKey key, NativeObject& proto)
     if (global->getPrototype(key) != ObjectValue(proto))
         return false;
 
+    MOZ_ASSERT(&proto.global() == global);
+
     if (key == JSProto_Object) {
         MOZ_ASSERT(proto.staticPrototypeIsImmutable(),
                    "proto should be Object.prototype, whose prototype is "
@@ -2054,7 +2073,6 @@ GetInitialShapeProtoKey(TaggedProto proto, JSContext* cx)
     if (proto.isObject() && proto.toObject()->isNative()) {
         GlobalObject* global = cx->global();
         NativeObject& obj = proto.toObject()->as<NativeObject>();
-        MOZ_ASSERT(global == &obj.global());
 
         if (IsOriginalProto(global, JSProto_Object, obj))
             return JSProto_Object;

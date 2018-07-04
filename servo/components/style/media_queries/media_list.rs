@@ -9,13 +9,13 @@
 use context::QuirksMode;
 use cssparser::{Delimiter, Parser};
 use cssparser::{ParserInput, Token};
-use error_reporting::{ContextualParseError, ParseErrorReporter};
-use parser::{ParserContext, ParserErrorContext};
+use error_reporting::ContextualParseError;
+use parser::ParserContext;
 use super::{Device, MediaQuery, Qualifier};
 
 /// A type that encapsulates a media query list.
-#[css(comma)]
-#[derive(Clone, Debug, MallocSizeOf, ToCss)]
+#[css(comma, derive_debug)]
+#[derive(Clone, MallocSizeOf, ToCss)]
 pub struct MediaList {
     /// The list of media queries.
     #[css(iterable)]
@@ -30,14 +30,10 @@ impl MediaList {
     /// "not all", see:
     ///
     /// <https://drafts.csswg.org/mediaqueries/#error-handling>
-    pub fn parse<R>(
+    pub fn parse(
         context: &ParserContext,
         input: &mut Parser,
-        error_reporter: &R,
-    ) -> MediaList
-    where
-        R: ParseErrorReporter,
-    {
+    ) -> Self {
         if input.is_exhausted() {
             return Self::empty();
         }
@@ -54,8 +50,7 @@ impl MediaList {
                     let location = err.location;
                     let error =
                         ContextualParseError::InvalidMediaRule(input.slice_from(start_position), err);
-                    let error_context = ParserErrorContext { error_reporter };
-                    context.log_css_error(&error_context, location, error);
+                    context.log_css_error(location, error);
                 },
             }
 
@@ -78,16 +73,14 @@ impl MediaList {
 
     /// Evaluate a whole `MediaList` against `Device`.
     pub fn evaluate(&self, device: &Device, quirks_mode: QuirksMode) -> bool {
-        // Check if it is an empty media query list or any queries match (OR condition)
+        // Check if it is an empty media query list or any queries match.
         // https://drafts.csswg.org/mediaqueries-4/#mq-list
         self.media_queries.is_empty() || self.media_queries.iter().any(|mq| {
             let media_match = mq.media_type.matches(device.media_type());
 
-            // Check if all conditions match (AND condition)
+            // Check if the media condition match.
             let query_match = media_match &&
-                mq.expressions
-                    .iter()
-                    .all(|expression| expression.matches(&device, quirks_mode));
+                mq.condition.as_ref().map_or(true, |c| c.matches(device, quirks_mode));
 
             // Apply the logical NOT qualifier to the result
             match mq.qualifier {

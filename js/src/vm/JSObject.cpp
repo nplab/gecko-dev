@@ -2109,7 +2109,7 @@ SetClassAndProto(JSContext* cx, HandleObject obj,
         // group so we can keep track of the interpreted function for Ion
         // inlining.
         MOZ_ASSERT(obj->is<JSFunction>());
-        newGroup = ObjectGroupRealm::makeGroup(cx, &JSFunction::class_, proto);
+        newGroup = ObjectGroupRealm::makeGroup(cx, oldGroup->realm(), &JSFunction::class_, proto);
         if (!newGroup)
             return false;
         newGroup->setInterpretedFunction(oldGroup->maybeInterpretedFunction());
@@ -2145,8 +2145,7 @@ JSObject::changeToSingleton(JSContext* cx, HandleObject obj)
 
     MarkObjectGroupUnknownProperties(cx, obj->group());
 
-    ObjectGroupRealm& realm = ObjectGroupRealm::get(obj->group());
-    ObjectGroup* group = ObjectGroup::lazySingletonGroup(cx, realm, obj->getClass(),
+    ObjectGroup* group = ObjectGroup::lazySingletonGroup(cx, obj->group(), obj->getClass(),
                                                          obj->taggedProto());
     if (!group)
         return false;
@@ -2803,13 +2802,17 @@ js::DefineProperty(JSContext* cx, HandleObject obj, HandleId id, Handle<Property
 
 bool
 js::DefineAccessorProperty(JSContext* cx, HandleObject obj, HandleId id,
-                           JSGetterOp getter, JSSetterOp setter, unsigned attrs,
+                           HandleObject getter, HandleObject setter, unsigned attrs,
                            ObjectOpResult& result)
 {
-    MOZ_ASSERT(!(attrs & JSPROP_PROPOP_ACCESSORS));
-
     Rooted<PropertyDescriptor> desc(cx);
-    desc.initFields(nullptr, UndefinedHandleValue, attrs, getter, setter);
+
+    {
+        GetterOp getterOp = JS_DATA_TO_FUNC_PTR(GetterOp, getter.get());
+        SetterOp setterOp = JS_DATA_TO_FUNC_PTR(SetterOp, setter.get());
+        desc.initFields(nullptr, UndefinedHandleValue, attrs, getterOp, setterOp);
+    }
+
     if (DefinePropertyOp op = obj->getOpsDefineProperty()) {
         MOZ_ASSERT(!cx->helperThread());
         return op(cx, obj, id, desc, result);
@@ -2831,31 +2834,11 @@ js::DefineDataProperty(JSContext* cx, HandleObject obj, HandleId id, HandleValue
 }
 
 bool
-js::DefineAccessorProperty(JSContext* cx, HandleObject obj, PropertyName* name,
-                           JSGetterOp getter, JSSetterOp setter, unsigned attrs,
-                           ObjectOpResult& result)
-{
-    RootedId id(cx, NameToId(name));
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs, result);
-}
-
-bool
 js::DefineDataProperty(JSContext* cx, HandleObject obj, PropertyName* name, HandleValue value,
                        unsigned attrs, ObjectOpResult& result)
 {
     RootedId id(cx, NameToId(name));
     return DefineDataProperty(cx, obj, id, value, attrs, result);
-}
-
-bool
-js::DefineAccessorElement(JSContext* cx, HandleObject obj, uint32_t index,
-                          JSGetterOp getter, JSSetterOp setter, unsigned attrs,
-                          ObjectOpResult& result)
-{
-    RootedId id(cx);
-    if (!IndexToId(cx, index, &id))
-        return false;
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs, result);
 }
 
 bool
@@ -2870,7 +2853,7 @@ js::DefineDataElement(JSContext* cx, HandleObject obj, uint32_t index, HandleVal
 
 bool
 js::DefineAccessorProperty(JSContext* cx, HandleObject obj, HandleId id,
-                           JSGetterOp getter, JSSetterOp setter, unsigned attrs)
+                           HandleObject getter, HandleObject setter, unsigned attrs)
 {
     ObjectOpResult result;
     if (!DefineAccessorProperty(cx, obj, id, getter, setter, attrs, result))
@@ -2899,29 +2882,11 @@ js::DefineDataProperty(JSContext* cx, HandleObject obj, HandleId id, HandleValue
 }
 
 bool
-js::DefineAccessorProperty(JSContext* cx, HandleObject obj, PropertyName* name,
-                           JSGetterOp getter, JSSetterOp setter, unsigned attrs)
-{
-    RootedId id(cx, NameToId(name));
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs);
-}
-
-bool
 js::DefineDataProperty(JSContext* cx, HandleObject obj, PropertyName* name, HandleValue value,
                        unsigned attrs)
 {
     RootedId id(cx, NameToId(name));
     return DefineDataProperty(cx, obj, id, value, attrs);
-}
-
-bool
-js::DefineAccessorElement(JSContext* cx, HandleObject obj, uint32_t index,
-                          JSGetterOp getter, JSSetterOp setter, unsigned attrs)
-{
-    RootedId id(cx);
-    if (!IndexToId(cx, index, &id))
-        return false;
-    return DefineAccessorProperty(cx, obj, id, getter, setter, attrs);
 }
 
 bool
@@ -3373,7 +3338,7 @@ GetObjectSlotNameFunctor::operator()(JS::CallbackTracer* trc, char* buf, size_t 
 
 /*** Debugging routines **************************************************************************/
 
-#ifdef DEBUG
+#if defined(DEBUG) || defined(JS_JITSPEW)
 
 /*
  * Routines to print out values during debugging.  These are FRIEND_API to help
@@ -3424,7 +3389,6 @@ dumpValue(const Value& v, js::GenericPrinter& out)
             out.put("false");
     } else if (v.isMagic()) {
         out.put("<invalid");
-#ifdef DEBUG
         switch (v.whyMagic()) {
           case JS_ELEMENTS_HOLE:     out.put(" elements hole");      break;
           case JS_NO_ITER_VALUE:     out.put(" no iter value");      break;
@@ -3432,7 +3396,6 @@ dumpValue(const Value& v, js::GenericPrinter& out)
           case JS_OPTIMIZED_OUT:     out.put(" optimized out");      break;
           default:                   out.put(" ?!");                 break;
         }
-#endif
         out.putChar('>');
     } else {
         out.put("unexpected value");
@@ -3722,7 +3685,7 @@ js::DumpInterpreterFrame(JSContext* cx, js::GenericPrinter& out, InterpreterFram
     }
 }
 
-#endif /* DEBUG */
+#endif /* defined(DEBUG) || defined(JS_JITSPEW) */
 
 namespace js {
 

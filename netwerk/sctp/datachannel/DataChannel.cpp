@@ -367,7 +367,7 @@ DataChannelConnection::DataChannelConnection(DataConnectionListener *listener,
   mLocalPort = 0;
   mRemotePort = 0;
   mPendingType = PENDING_NONE;
-  mUpcallApi = PR_GetEnv("SCTP_UPCALL_API");
+  mUpcallApi = Preferences::GetBool("media.peerconnection.sctp.upcallAPI");
   LOG(("Constructor DataChannelConnection=%p, listener=%p", this, mListener.get()));
   mInternalIOThread = nullptr;
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED

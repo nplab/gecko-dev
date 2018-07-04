@@ -506,6 +506,8 @@ pref("media.peerconnection.capture_delay", 100);
 #else
 pref("media.peerconnection.capture_delay", 70);
 #endif
+
+pref("media.peerconnection.sctp.upcallAPI", true);
 #endif
 
 pref("dom.webaudio.enabled", true);

@@ -15,7 +15,6 @@ user_pref("app.update.url.android", "");
 // bug 1210465.
 user_pref("apz.content_response_timeout", 60000);
 user_pref("browser.EULA.override", true);
-user_pref("browser.chrome.guess_favicon", false);
 // Make sure we don't try to load snippets from the network.
 user_pref("browser.aboutHomeSnippets.updateUrl", "nonexistent://test");
 // Disable Bookmark backups by default.
@@ -51,8 +50,6 @@ user_pref("browser.safebrowsing.provider.google4.updateURL", "http://{server}/sa
 user_pref("browser.safebrowsing.provider.mozilla.gethashURL", "http://{server}/safebrowsing-dummy/gethash");
 user_pref("browser.safebrowsing.provider.mozilla.updateURL", "http://{server}/safebrowsing-dummy/update");
 user_pref("browser.search.suggest.timeout", 10000); // use a 10s suggestion timeout in tests
-// Bug 1458697 - Temporarily enable session store debug logging on Android to track down a test failure
-user_pref("browser.sessionstore.debug_logging", true);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.snippets.firstrunHomepage.enabled", false);
 user_pref("browser.startup.page", 0); // use about:blank, not browser.startup.homepage

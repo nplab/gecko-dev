@@ -2600,12 +2600,7 @@ nsIDocument::IsSynthesized() {
 bool
 nsDocument::IsShadowDOMEnabled(JSContext* aCx, JSObject* aObject)
 {
-  JS::Rooted<JSObject*> obj(aCx, aObject);
-
-  JSAutoRealm ar(aCx, obj);
-  JS::Rooted<JSObject*> global(aCx, JS_GetGlobalForObject(aCx, obj));
-  nsCOMPtr<nsPIDOMWindowInner> window =
-    do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(global));
+  nsCOMPtr<nsPIDOMWindowInner> window = xpc::WindowGlobalOrNull(aObject);
 
   nsIDocument* doc = window ? window->GetExtantDoc() : nullptr;
   if (!doc) {
@@ -9593,47 +9588,15 @@ nsIDocument::SetNavigationTiming(nsDOMNavigationTiming* aTiming)
   }
 }
 
-Element*
-nsIDocument::FindImageMap(const nsAString& aUseMapValue)
+nsContentList*
+nsIDocument::ImageMapList()
 {
-  if (aUseMapValue.IsEmpty()) {
-    return nullptr;
-  }
-
-  nsAString::const_iterator start, end;
-  aUseMapValue.BeginReading(start);
-  aUseMapValue.EndReading(end);
-
-  int32_t hash = aUseMapValue.FindChar('#');
-  if (hash < 0) {
-    return nullptr;
-  }
-  // aUsemap contains a '#', set start to point right after the '#'
-  start.advance(hash + 1);
-
-  if (start == end) {
-    return nullptr; // aUsemap == "#"
-  }
-
-  const nsAString& mapName = Substring(start, end);
-
   if (!mImageMaps) {
-    mImageMaps = new nsContentList(this, kNameSpaceID_XHTML, nsGkAtoms::map, nsGkAtoms::map);
+    mImageMaps = new nsContentList(this, kNameSpaceID_XHTML,
+                                   nsGkAtoms::map, nsGkAtoms::map);
   }
 
-  uint32_t i, n = mImageMaps->Length(true);
-  nsString name;
-  for (i = 0; i < n; ++i) {
-    nsIContent* map = mImageMaps->Item(i);
-    if (map->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::id, mapName,
-                                      eCaseMatters) ||
-        map->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name, mapName,
-                                      eCaseMatters)) {
-      return map->AsElement();
-    }
-  }
-
-  return nullptr;
+  return mImageMaps;
 }
 
 #define DEPRECATED_OPERATION(_op) #_op "Warning",
@@ -11615,6 +11578,14 @@ nsIDocument::DocAddSizeOfExcludingThis(nsWindowSizes& aSizes) const
     mNodeInfoManager->AddSizeOfIncludingThis(aSizes);
   }
 
+  aSizes.mDOMMediaQueryLists +=
+    mDOMMediaQueryLists.sizeOfExcludingThis(aSizes.mState.mMallocSizeOf);
+
+  for (const MediaQueryList* mql : mDOMMediaQueryLists) {
+    aSizes.mDOMMediaQueryLists +=
+      mql->SizeOfExcludingThis(aSizes.mState.mMallocSizeOf);
+  }
+
   // Measurement of the following members may be added later if DMD finds it
   // is worthwhile:
   // - many!
@@ -11981,6 +11952,7 @@ nsIDocument::InlineScriptAllowedByCSP()
                                        true,          // aParserCreated
                                        nullptr, // FIXME get script sample (bug 1314567)
                                        0,             // aLineNumber
+                                       0,             // aColumnNumber
                                        &allowsInlineScript);
     NS_ENSURE_SUCCESS(rv, true);
   }

@@ -48,6 +48,7 @@
 #include "mozilla/dom/HTMLElementBinding.h"
 #include "mozilla/dom/HTMLEmbedElementBinding.h"
 #include "mozilla/dom/XULElementBinding.h"
+#include "mozilla/dom/XULFrameElementBinding.h"
 #include "mozilla/dom/XULPopupElementBinding.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/ResolveSystemBinding.h"
@@ -1174,21 +1175,8 @@ XPCOMObjectToJsval(JSContext* cx, JS::Handle<JSObject*> scope,
                    xpcObjectHelper& helper, const nsIID* iid,
                    bool allowNativeWrapper, JS::MutableHandle<JS::Value> rval)
 {
-  if (!NativeInterface2JSObjectAndThrowIfFailed(cx, scope, rval, helper, iid,
-                                                allowNativeWrapper)) {
-    return false;
-  }
-
-#ifdef DEBUG
-  JSObject* jsobj = rval.toObjectOrNull();
-  if (jsobj &&
-      js::GetGlobalForObjectCrossCompartment(jsobj) == jsobj) {
-    NS_ASSERTION(js::GetObjectClass(jsobj)->flags & JSCLASS_IS_GLOBAL,
-                 "Why did we recreate this wrapper?");
-  }
-#endif
-
-  return true;
+  return NativeInterface2JSObjectAndThrowIfFailed(cx, scope, rval, helper, iid,
+                                                  allowNativeWrapper);
 }
 
 bool
@@ -2297,9 +2285,8 @@ ReparentWrapper(JSContext* aCx, JS::Handle<JSObject*> aObjArg, ErrorResult& aErr
   const DOMJSClass* domClass = GetDOMClass(aObj);
 
   // DOM things are always parented to globals.
-  JS::Rooted<JSObject*> oldParent(aCx,
-                                  js::GetGlobalForObjectCrossCompartment(aObj));
-  MOZ_ASSERT(js::GetGlobalForObjectCrossCompartment(oldParent) == oldParent);
+  JS::Rooted<JSObject*> oldParent(aCx, JS::GetNonCCWObjectGlobal(aObj));
+  MOZ_ASSERT(JS_IsGlobalObject(oldParent));
 
   JS::Rooted<JSObject*> newParent(aCx,
                                   domClass->mGetAssociatedGlobal(aCx, aObj));
@@ -2429,7 +2416,7 @@ GlobalObject::GlobalObject(JSContext* aCx, JSObject* aObject)
     }
   }
 
-  mGlobalJSObject = js::GetGlobalForObjectCrossCompartment(obj);
+  mGlobalJSObject = JS::GetNonCCWObjectGlobal(obj);
 }
 
 nsISupports*
@@ -3695,7 +3682,7 @@ GetDesiredProto(JSContext* aCx, const JS::CallArgs& aCallArgs,
 
   if (protoID != prototypes::id::_ID_Count) {
     ProtoAndIfaceCache& protoAndIfaceCache =
-      *GetProtoAndIfaceCache(js::GetGlobalForObjectCrossCompartment(newTarget));
+      *GetProtoAndIfaceCache(JS::GetNonCCWObjectGlobal(newTarget));
     aDesiredProto.set(protoAndIfaceCache.EntrySlotMustExist(protoID));
     if (newTarget != originalNewTarget) {
       return JS_WrapObject(aCx, aDesiredProto);
@@ -3868,6 +3855,10 @@ HTMLConstructor(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
           definition->mLocalName == nsGkAtoms::panel ||
           definition->mLocalName == nsGkAtoms::tooltip) {
         cb = XULPopupElement_Binding::GetConstructorObject;
+      } else if (definition->mLocalName == nsGkAtoms::iframe ||
+                 definition->mLocalName == nsGkAtoms::browser ||
+                 definition->mLocalName == nsGkAtoms::editor) {
+        cb = XULFrameElement_Binding::GetConstructorObject;
       } else {
         cb = XULElement_Binding::GetConstructorObject;
       }

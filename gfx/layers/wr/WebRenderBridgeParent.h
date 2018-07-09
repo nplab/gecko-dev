@@ -53,7 +53,8 @@ public:
                         CompositorVsyncScheduler* aScheduler,
                         RefPtr<wr::WebRenderAPI>&& aApi,
                         RefPtr<AsyncImagePipelineManager>&& aImageMgr,
-                        RefPtr<CompositorAnimationStorage>&& aAnimStorage);
+                        RefPtr<CompositorAnimationStorage>&& aAnimStorage,
+                        TimeDuration aVsyncRate);
 
   static WebRenderBridgeParent* CreateDestroyed(const wr::PipelineId& aPipelineId);
 
@@ -87,6 +88,7 @@ public:
                                              nsTArray<RefCountedShmem>&& aSmallShmems,
                                              nsTArray<ipc::Shmem>&& aLargeShmems,
                                              const wr::IdNamespace& aIdNamespace,
+                                             const TimeStamp& aRefreshStartTime,
                                              const TimeStamp& aTxnStartTime,
                                              const TimeStamp& aFwdTime) override;
   mozilla::ipc::IPCResult RecvEmptyTransaction(const FocusTarget& aFocusTarget,
@@ -97,6 +99,7 @@ public:
                                                const uint64_t& aFwdTransactionId,
                                                const TransactionId& aTransactionId,
                                                const wr::IdNamespace& aIdNamespace,
+                                               const TimeStamp& aRefreshStartTime,
                                                const TimeStamp& aTxnStartTime,
                                                const TimeStamp& aFwdTime) override;
   mozilla::ipc::IPCResult RecvSetFocusTarget(const FocusTarget& aFocusTarget) override;
@@ -150,6 +153,7 @@ public:
 
   void HoldPendingTransactionId(const wr::Epoch& aWrEpoch,
                                 TransactionId aTransactionId,
+                                const TimeStamp& aRefreshStartTime,
                                 const TimeStamp& aTxnStartTime,
                                 const TimeStamp& aFwdTime);
   TransactionId LastPendingTransactionId();
@@ -205,15 +209,19 @@ private:
   bool AddExternalImage(wr::ExternalImageId aExtId, wr::ImageKey aKey,
                         wr::TransactionBuilder& aResources);
 
+  bool AddExternalImageForTexture(wr::ExternalImageId aExtId,
+                                  wr::ImageKey aKey,
+                                  TextureHost* aTexture,
+                                  wr::TransactionBuilder& aResources);
+
   void AddPipelineIdForCompositable(const wr::PipelineId& aPipelineIds,
                                     const CompositableHandle& aHandle,
                                     const bool& aAsync);
   void RemovePipelineIdForCompositable(const wr::PipelineId& aPipelineId,
                                        wr::TransactionBuilder& aTxn);
 
-  void AddExternalImageIdForCompositable(const ExternalImageId& aImageId,
-                                         const CompositableHandle& aHandle);
   void RemoveExternalImageId(const ExternalImageId& aImageId);
+  void ReleaseTextureOfImage(const wr::ImageKey& aKey);
 
   LayersId GetLayersId() const;
   void ProcessWebRenderParentCommands(const InfallibleTArray<WebRenderParentCommand>& aCommands,
@@ -230,6 +238,8 @@ private:
   bool SampleAnimations(nsTArray<wr::WrOpacityProperty>& aOpacityArray,
                         nsTArray<wr::WrTransformProperty>& aTransformArray);
 
+  bool IsRootWebRenderBridgeParent() const;
+
   CompositorBridgeParent* GetRootCompositorBridgeParent() const;
 
   RefPtr<WebRenderBridgeParent> GetRootWebRenderBridgeParent() const;
@@ -245,14 +255,20 @@ private:
 
 private:
   struct PendingTransactionId {
-    PendingTransactionId(const wr::Epoch& aEpoch, TransactionId aId, const TimeStamp& aTxnStartTime, const TimeStamp& aFwdTime)
+    PendingTransactionId(const wr::Epoch& aEpoch,
+                         TransactionId aId,
+                         const TimeStamp& aRefreshStartTime,
+                         const TimeStamp& aTxnStartTime,
+                         const TimeStamp& aFwdTime)
       : mEpoch(aEpoch)
       , mId(aId)
+      , mRefreshStartTime(aRefreshStartTime)
       , mTxnStartTime(aTxnStartTime)
       , mFwdTime(aFwdTime)
     {}
     wr::Epoch mEpoch;
     TransactionId mId;
+    TimeStamp mRefreshStartTime;
     TimeStamp mTxnStartTime;
     TimeStamp mFwdTime;
   };
@@ -279,9 +295,10 @@ private:
   // destroyed abnormally and Tab move between different windows.
   std::unordered_set<uint64_t> mActiveAnimations;
   nsDataHashtable<nsUint64HashKey, RefPtr<WebRenderImageHost>> mAsyncCompositables;
-  nsDataHashtable<nsUint64HashKey, RefPtr<WebRenderImageHost>> mExternalImageIds;
+  nsDataHashtable<nsUint64HashKey, CompositableTextureHostRef> mTextureHosts;
   nsTHashtable<nsUint64HashKey> mSharedSurfaceIds;
 
+  TimeDuration mVsyncRate;
   TimeStamp mPreviousFrameTimeStamp;
   // These fields keep track of the latest layer observer epoch values in the child and the
   // parent. mChildLayerObserverEpoch is the latest epoch value received from the child.

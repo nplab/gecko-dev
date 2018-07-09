@@ -277,7 +277,8 @@ nsCSPContext::permitsInternal(CSPDirective aDir,
                                    EmptyString(), /* no observer subject */
                                    EmptyString(), /* no source file      */
                                    EmptyString(), /* no script sample    */
-                                   0);            /* no line number      */
+                                   0,             /* no line number      */
+                                   0);            /* no column number    */
       }
     }
   }
@@ -457,7 +458,8 @@ nsCSPContext::reportInlineViolation(nsContentPolicyType aContentType,
                                     const nsAString& aContent,
                                     const nsAString& aViolatedDirective,
                                     uint32_t aViolatedPolicyIndex, // TODO, use report only flag for that
-                                    uint32_t aLineNumber)
+                                    uint32_t aLineNumber,
+                                    uint32_t aColumnNumber)
 {
   nsString observerSubject;
   // if the nonce is non empty, then we report the nonce error, otherwise
@@ -499,7 +501,8 @@ nsCSPContext::reportInlineViolation(nsContentPolicyType aContentType,
                        observerSubject,                    // aObserverSubject
                        NS_ConvertUTF8toUTF16(sourceFile),  // aSourceFile
                        codeSample,                         // aScriptSample
-                       aLineNumber);                       // aLineNum
+                       aLineNumber,                        // aLineNum
+                       aColumnNumber);                     // aColumnNum
 }
 
 NS_IMETHODIMP
@@ -508,6 +511,7 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
                               bool aParserCreated,
                               nsISupports* aElementOrContent,
                               uint32_t aLineNumber,
+                              uint32_t aColumnNumber,
                               bool* outAllowsInline)
 {
   *outAllowsInline = true;
@@ -559,13 +563,17 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
         *outAllowsInline = false;
       }
       nsAutoString violatedDirective;
-      mPolicies[i]->getDirectiveStringForContentType(aContentType, violatedDirective);
+      bool reportSample = false;
+      mPolicies[i]->getDirectiveStringAndReportSampleForContentType(aContentType,
+                                                                    violatedDirective,
+                                                                    &reportSample);
       reportInlineViolation(aContentType,
                             aNonce,
-                            content,
+                            reportSample ? content : EmptyString(),
                             violatedDirective,
                             i,
-                            aLineNumber);
+                            aLineNumber,
+                            aColumnNumber);
     }
   }
   return NS_OK;
@@ -584,7 +592,8 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
  * which is why we must check allows() again here.
  *
  * Note: This macro uses some parameters from its caller's context:
- * p, mPolicies, this, aSourceFile, aScriptSample, aLineNum, selfISupports
+ * p, mPolicies, this, aSourceFile, aScriptSample, aLineNum, aColumnNum,
+ * selfISupports
  *
  * @param violationType: the VIOLATION_TYPE_* constant (partial symbol)
  *                 such as INLINE_SCRIPT
@@ -607,12 +616,16 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
                               keyword, nonceOrHash, false))                    \
     {                                                                          \
       nsAutoString violatedDirective;                                          \
-      mPolicies[p]->getDirectiveStringForContentType(                          \
+      bool reportSample = false;                                               \
+      mPolicies[p]->getDirectiveStringAndReportSampleForContentType(           \
                         nsIContentPolicy::TYPE_ ## contentPolicyType,          \
-                        violatedDirective);                                    \
+                        violatedDirective, &reportSample);                     \
       this->AsyncReportViolation(selfISupports, nullptr, violatedDirective, p, \
                                  NS_LITERAL_STRING(observerTopic),             \
-                                 aSourceFile, aScriptSample, aLineNum);        \
+                                 aSourceFile,                                  \
+                                 reportSample                                  \
+                                   ? aScriptSample : EmptyString(),            \
+                                 aLineNum, aColumnNum);                        \
     }                                                                          \
     PR_END_MACRO;                                                              \
     break
@@ -629,6 +642,8 @@ nsCSPContext::GetAllowsInline(nsContentPolicyType aContentType,
  *     sample of the violating content (to aid debugging)
  * @param aLineNum
  *     source line number of the violation (if available)
+ * @param aColumnNum
+ *     source column number of the violation (if available)
  * @param aNonce
  *     (optional) If this is a nonce violation, include the nonce so we can
  *     recheck to determine which policies were violated and send the
@@ -644,6 +659,7 @@ nsCSPContext::LogViolationDetails(uint16_t aViolationType,
                                   const nsAString& aSourceFile,
                                   const nsAString& aScriptSample,
                                   int32_t aLineNum,
+                                  int32_t aColumnNum,
                                   const nsAString& aNonce,
                                   const nsAString& aContent)
 {
@@ -860,6 +876,7 @@ nsCSPContext::GatherSecurityPolicyViolationEventData(
   nsAString& aSourceFile,
   nsAString& aScriptSample,
   uint32_t aLineNum,
+  uint32_t aColumnNum,
   mozilla::dom::SecurityPolicyViolationEventInit& aViolationEventInit)
 {
   NS_ENSURE_ARG_MAX(aViolatedPolicyIndex, mPolicies.Length() - 1);
@@ -940,8 +957,7 @@ nsCSPContext::GatherSecurityPolicyViolationEventData(
   aViolationEventInit.mLineNumber = aLineNum;
 
   // column-number
-  // TODO: Set correct column number.
-  aViolationEventInit.mColumnNumber = 0;
+  aViolationEventInit.mColumnNumber = aColumnNum;
 
   aViolationEventInit.mBubbles = true;
   aViolationEventInit.mComposed = true;
@@ -991,6 +1007,11 @@ nsCSPContext::SendReports(
     report.mCsp_report.mLine_number.Value() = aViolationEventInit.mLineNumber;
   }
 
+  if (aViolationEventInit.mColumnNumber != 0) {
+    report.mCsp_report.mColumn_number.Construct();
+    report.mCsp_report.mColumn_number.Value() = aViolationEventInit.mColumnNumber;
+  }
+
   nsString csp_report;
   if (!report.ToJSON(csp_report)) {
     return NS_ERROR_FAILURE;
@@ -1016,7 +1037,9 @@ nsCSPContext::SendReports(
                      reportURICstring.get()));
       logToConsole("triedToSendReport", params, ArrayLength(params),
                    aViolationEventInit.mSourceFile, aViolationEventInit.mSample,
-                   aViolationEventInit.mLineNumber, 0, nsIScriptError::errorFlag);
+                   aViolationEventInit.mLineNumber,
+                   aViolationEventInit.mColumnNumber,
+                   nsIScriptError::errorFlag);
       continue; // don't return yet, there may be more URIs
     }
 
@@ -1060,7 +1083,9 @@ nsCSPContext::SendReports(
       const char16_t* params[] = { reportURIs[r].get() };
       logToConsole("reportURInotHttpsOrHttp2", params, ArrayLength(params),
                    aViolationEventInit.mSourceFile, aViolationEventInit.mSample,
-                   aViolationEventInit.mLineNumber, 0, nsIScriptError::errorFlag);
+                   aViolationEventInit.mLineNumber,
+                   aViolationEventInit.mColumnNumber,
+                   nsIScriptError::errorFlag);
       continue;
     }
 
@@ -1126,7 +1151,9 @@ nsCSPContext::SendReports(
       CSPCONTEXTLOG(("AsyncOpen failed for report URI %s", NS_ConvertUTF16toUTF8(params[0]).get()));
       logToConsole("triedToSendReport", params, ArrayLength(params),
                    aViolationEventInit.mSourceFile, aViolationEventInit.mSample,
-                   aViolationEventInit.mLineNumber, 0, nsIScriptError::errorFlag);
+                   aViolationEventInit.mLineNumber,
+                   aViolationEventInit.mColumnNumber,
+                   nsIScriptError::errorFlag);
     } else {
       CSPCONTEXTLOG(("Sent violation report to URI %s", reportURICstring.get()));
     }
@@ -1174,6 +1201,7 @@ class CSPReportSenderRunnable final : public Runnable
                             const nsAString& aSourceFile,
                             const nsAString& aScriptSample,
                             uint32_t aLineNum,
+                            uint32_t aColumnNum,
                             nsCSPContext* aCSPContext)
       : mozilla::Runnable("CSPReportSenderRunnable")
       , mBlockedContentSource(aBlockedContentSource)
@@ -1184,6 +1212,7 @@ class CSPReportSenderRunnable final : public Runnable
       , mSourceFile(aSourceFile)
       , mScriptSample(aScriptSample)
       , mLineNum(aLineNum)
+      , mColumnNum(aColumnNum)
       , mCSPContext(aCSPContext)
     {
       NS_ASSERTION(!aViolatedDirective.IsEmpty(), "Can not send reports without a violated directive");
@@ -1214,7 +1243,7 @@ class CSPReportSenderRunnable final : public Runnable
       rv = mCSPContext->GatherSecurityPolicyViolationEventData(
         blockedURI, mOriginalURI,
         mViolatedDirective, mViolatedPolicyIndex,
-        mSourceFile, mScriptSample, mLineNum,
+        mSourceFile, mScriptSample, mLineNum, mColumnNum,
         init);
       NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1222,8 +1251,8 @@ class CSPReportSenderRunnable final : public Runnable
       nsCOMPtr<nsIObserverService> observerService = mozilla::services::GetObserverService();
       NS_ASSERTION(observerService, "needs observer service");
       rv = observerService->NotifyObservers(mObserverSubject,
-                                                     CSP_VIOLATION_TOPIC,
-                                                     mViolatedDirective.get());
+                                            CSP_VIOLATION_TOPIC,
+                                            mViolatedDirective.get());
       NS_ENSURE_SUCCESS(rv, rv);
 
       // 2) send reports for the policy that was violated
@@ -1242,7 +1271,7 @@ class CSPReportSenderRunnable final : public Runnable
           rv = blockedURI->SchemeIs("data", &isData);
           if (NS_SUCCEEDED(rv) && isData) {
             blockedDataStr.Truncate(40);
-            blockedDataStr.AppendASCII("...");
+            blockedDataStr.AppendASCII("…");
           }
         }
       } else if (blockedString) {
@@ -1256,7 +1285,7 @@ class CSPReportSenderRunnable final : public Runnable
         mCSPContext->logToConsole(mReportOnlyFlag ? "CSPROViolationWithURI" :
                                                     "CSPViolationWithURI",
                                   params, ArrayLength(params), mSourceFile, mScriptSample,
-                                  mLineNum, 0, nsIScriptError::errorFlag);
+                                  mLineNum, mColumnNum, nsIScriptError::errorFlag);
       }
 
       // 4) fire violation event
@@ -1275,6 +1304,7 @@ class CSPReportSenderRunnable final : public Runnable
     nsString                mSourceFile;
     nsString                mScriptSample;
     uint32_t                mLineNum;
+    uint32_t                mColumnNum;
     RefPtr<nsCSPContext>    mCSPContext;
 };
 
@@ -1302,6 +1332,8 @@ class CSPReportSenderRunnable final : public Runnable
  *        a sample of the violating inline script
  * @param aLineNum
  *        source line number of the violation (if available)
+ * @param aColumnNum
+ *        source column number of the violation (if available)
  */
 nsresult
 nsCSPContext::AsyncReportViolation(nsISupports* aBlockedContentSource,
@@ -1311,7 +1343,8 @@ nsCSPContext::AsyncReportViolation(nsISupports* aBlockedContentSource,
                                    const nsAString& aObserverSubject,
                                    const nsAString& aSourceFile,
                                    const nsAString& aScriptSample,
-                                   uint32_t aLineNum)
+                                   uint32_t aLineNum,
+                                   uint32_t aColumnNum)
 {
   NS_ENSURE_ARG_MAX(aViolatedPolicyIndex, mPolicies.Length() - 1);
 
@@ -1325,6 +1358,7 @@ nsCSPContext::AsyncReportViolation(nsISupports* aBlockedContentSource,
                                 aSourceFile,
                                 aScriptSample,
                                 aLineNum,
+                                aColumnNum,
                                 this);
 
   if (XRE_IsContentProcess()) {

@@ -178,6 +178,7 @@ function templateHTML(options, html) {
   const debugString = options.debug ? "-dev" : "";
   const scripts = [
     "chrome://browser/content/contentSearchUI.js",
+    "chrome://browser/content/contentTheme.js",
     `${options.baseUrl}vendor/react${debugString}.js`,
     `${options.baseUrl}vendor/react-dom${debugString}.js`,
     `${options.baseUrl}vendor/prop-types.js`,
@@ -308,7 +309,7 @@ function main() { // eslint-disable-line max-statements
   // Process the default locale first then all the ones from mozilla-central
   const localizedLocales = [];
   const skippedLocales = [];
-  for (const locale of [DEFAULT_LOCALE, ...CENTRAL_LOCALES, ...extraLocales]) {
+  for (const locale of [DEFAULT_LOCALE, ...CENTRAL_LOCALES]) {
     // Skip the locale if it would have resulted in duplicate packaged files
     const strings = getStrings(locale, allStrings);
     if (isSubset(strings, defaultStrings) || isSubset(strings, langStrings)) {
@@ -351,7 +352,7 @@ function main() { // eslint-disable-line max-statements
     console.log("\x1b[33m", `Skipped the following locales because they use the same strings as ${DEFAULT_LOCALE} or its language locale: ${skippedLocales.join(", ")}`, "\x1b[0m");
   }
   if (extraLocales.length) {
-    console.log("\x1b[31m", `✗ These locales were not in CENTRAL_LOCALES, but probably should be: ${extraLocales.join(", ")}`, "\x1b[0m");
+    console.log("\x1b[33m", `Skipped the following locales because they are not in CENTRAL_LOCALES: ${extraLocales.join(", ")}`, "\x1b[0m");
   }
 
   // Provide some help to copy/paste locales if tests are failing

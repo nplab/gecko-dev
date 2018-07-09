@@ -71,6 +71,7 @@
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/CookieServiceChild.h"
 #include "mozilla/net/CaptivePortalService.h"
+#include "mozilla/PerformanceMetricsCollector.h"
 #include "mozilla/PerformanceUtils.h"
 #include "mozilla/plugins/PluginInstanceParent.h"
 #include "mozilla/plugins/PluginModuleParent.h"
@@ -773,9 +774,14 @@ GetCreateWindowParams(mozIDOMWindowProxy* aParent,
                       nsIPrincipal** aTriggeringPrincipal)
 {
   *aFullZoom = 1.0f;
+  if (!aTriggeringPrincipal) {
+    NS_ERROR("aTriggeringPrincipal is null");
+    return NS_ERROR_FAILURE;
+  }
   auto* opener = nsPIDOMWindowOuter::From(aParent);
   if (!opener) {
-    nsCOMPtr<nsIPrincipal> nullPrincipal = NullPrincipal::CreateWithoutOriginAttributes();
+    nsCOMPtr<nsIPrincipal> nullPrincipal =
+      NullPrincipal::CreateWithoutOriginAttributes();
     NS_ADDREF(*aTriggeringPrincipal = nullPrincipal);
     return NS_OK;
   }
@@ -1387,12 +1393,12 @@ ContentChild::GetResultForRenderingInitFailure(base::ProcessId aOtherPid)
 }
 
 mozilla::ipc::IPCResult
-ContentChild::RecvRequestPerformanceMetrics()
+ContentChild::RecvRequestPerformanceMetrics(const nsID& aID)
 {
   MOZ_ASSERT(mozilla::StaticPrefs::dom_performance_enable_scheduler_timing());
   nsTArray<PerformanceInfo> info;
   CollectPerformanceInfo(info);
-  SendAddPerformanceMetrics(info);
+  SendAddPerformanceMetrics(aID, info);
   return IPC_OK();
 }
 
@@ -2261,6 +2267,9 @@ ContentChild::RecvRegisterChrome(InfallibleTArray<ChromePackage>&& packages,
   nsCOMPtr<nsIChromeRegistry> registrySvc = nsChromeRegistry::GetService();
   nsChromeRegistryContent* chromeRegistry =
     static_cast<nsChromeRegistryContent*>(registrySvc.get());
+  if (!chromeRegistry) {
+    return IPC_FAIL(this, "ChromeRegistryContent is null!");
+  }
   chromeRegistry->RegisterRemoteChrome(packages, resources, overrides,
                                        locale, reset);
   return IPC_OK();
@@ -2272,6 +2281,9 @@ ContentChild::RecvRegisterChromeItem(const ChromeRegistryItem& item)
   nsCOMPtr<nsIChromeRegistry> registrySvc = nsChromeRegistry::GetService();
   nsChromeRegistryContent* chromeRegistry =
     static_cast<nsChromeRegistryContent*>(registrySvc.get());
+  if (!chromeRegistry) {
+    return IPC_FAIL(this, "ChromeRegistryContent is null!");
+  }
   switch (item.type()) {
     case ChromeRegistryItem::TChromePackage:
       chromeRegistry->RegisterPackage(item.get_ChromePackage());
